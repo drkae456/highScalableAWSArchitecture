@@ -8,10 +8,10 @@ Parameters:
   EcrImageUri:
     Type: String
     Description: ECR URI for FastAPI container
-    Default: 650777358419.dkr.ecr.ap-southeast-4.amazonaws.com/high-scalable-aws-app:fe8a0406261b6c40dec04fcf5def92cb560b8d77
+    Default: 650777358419.dkr.ecr.ap-southeast-4.amazonaws.com/high-scalable-aws-app:latest
   LambdaFunctionName:
     Type: String
-    Default: FastApiFunction
+    Default: FastApiFunction1
   TableName:
     Type: String
     Default: OrdersTable
@@ -116,7 +116,7 @@ Resources:
           CidrIp: 0.0.0.0/0
 
   # FastAPI Lambda
-  FastApiFunction:
+  FastApiFunction1:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Ref LambdaFunctionName
@@ -156,7 +156,7 @@ Resources:
       IntegrationUri:
         Fn::Sub:
           - arn:aws:apigateway:ap-southeast-4:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-          - LambdaArn: !GetAtt FastApiFunction.Arn
+          - LambdaArn: !GetAtt FastApiFunction1.Arn
       PayloadFormatVersion: "2.0"
 
   ApiRoute:
@@ -176,7 +176,7 @@ Resources:
   PermissionApiLambda:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref FastApiFunction
+      FunctionName: !Ref FastApiFunction1
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn:

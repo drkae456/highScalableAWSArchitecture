@@ -161,30 +161,11 @@ jobs:
       - name: Deploy WAF Stack
         id: deploy-waf
         run: |
-          # Check if stack exists
-          if aws cloudformation describe-stacks --stack-name high-scalable-waf-global --region us-east-1 >/dev/null 2>&1; then
-            echo "Stack exists, updating..."
-            aws cloudformation deploy \
-              --template-file cform/waf-global.yaml \
-              --stack-name high-scalable-waf-global \
-              --region us-east-1 \
-              --no-fail-on-empty-changeset
-          else
-            echo "Creating new stack with delete on failure..."
-            aws cloudformation create-stack \
-              --template-body file://cform/waf-global.yaml \
-              --stack-name high-scalable-waf-global \
-              --region us-east-1 \
-              --on-failure DELETE || {
-                echo "Stack creation failed and will be automatically deleted"
-                exit 1
-              }
-            
-            # Wait for stack creation to complete
-            aws cloudformation wait stack-create-complete \
-              --stack-name high-scalable-waf-global \
-              --region us-east-1
-          fi
+          aws cloudformation deploy \
+            --template-file cform/waf-global.yaml \
+            --stack-name high-scalable-waf-global \
+            --region us-east-1 \
+            --no-fail-on-empty-changeset
 
           WAF_ARN=$(aws cloudformation describe-stacks \
             --stack-name high-scalable-waf-global \
@@ -216,30 +197,11 @@ jobs:
 
       - name: Deploy Network Stack
         run: |
-          # Check if stack exists
-          if aws cloudformation describe-stacks --stack-name high-scalable-network --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "Stack exists, updating..."
-            aws cloudformation deploy \
-              --template-file cform/network.yaml \
-              --stack-name high-scalable-network \
-              --region ${{ env.AWS_REGION }} \
-              --no-fail-on-empty-changeset
-          else
-            echo "Creating new stack with delete on failure..."
-            aws cloudformation create-stack \
-              --template-body file://cform/network.yaml \
-              --stack-name high-scalable-network \
-              --region ${{ env.AWS_REGION }} \
-              --on-failure DELETE || {
-                echo "Stack creation failed and will be automatically deleted"
-                exit 1
-              }
-            
-            # Wait for stack creation to complete
-            aws cloudformation wait stack-create-complete \
-              --stack-name high-scalable-network \
-              --region ${{ env.AWS_REGION }}
-          fi
+          aws cloudformation deploy \
+            --template-file cform/network.yaml \
+            --stack-name high-scalable-network \
+            --region ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset
 
   deploy-application:
     name: Deploy Application Stack
@@ -266,42 +228,17 @@ jobs:
           # Get the ECR image URI
           ECR_URI="${{ needs.terraform-setup.outputs.ecr-registry }}:${{ github.sha }}"
 
-          # Check if stack exists
-          if aws cloudformation describe-stacks --stack-name high-scalable-application --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-            echo "Stack exists, updating..."
-            aws cloudformation deploy \
-              --template-file cform/application.yaml \
-              --stack-name high-scalable-application \
-              --region ${{ env.AWS_REGION }} \
-              --parameter-overrides \
-                EcrImageUri=$ECR_URI \
-                GlobalWebACLArn="${{ needs.deploy-waf.outputs.waf-arn }}" \
-                LambdaFunctionName=FastApiFunction \
-                TableName=OrdersTable \
-              --capabilities CAPABILITY_IAM \
-              --no-fail-on-empty-changeset
-          else
-            echo "Creating new stack with delete on failure..."
-            aws cloudformation create-stack \
-              --template-body file://cform/application.yaml \
-              --stack-name high-scalable-application \
-              --region ${{ env.AWS_REGION }} \
-              --parameters \
-                ParameterKey=EcrImageUri,ParameterValue=$ECR_URI \
-                ParameterKey=GlobalWebACLArn,ParameterValue="${{ needs.deploy-waf.outputs.waf-arn }}" \
-                ParameterKey=LambdaFunctionName,ParameterValue=FastApiFunction \
-                ParameterKey=TableName,ParameterValue=OrdersTable \
-              --capabilities CAPABILITY_IAM \
-              --on-failure DELETE || {
-                echo "Stack creation failed and will be automatically deleted"
-                exit 1
-              }
-            
-            # Wait for stack creation to complete
-            aws cloudformation wait stack-create-complete \
-              --stack-name high-scalable-application \
-              --region ${{ env.AWS_REGION }}
-          fi
+          aws cloudformation deploy \
+            --template-file cform/application.yaml \
+            --stack-name high-scalable-application \
+            --region ${{ env.AWS_REGION }} \
+            --parameter-overrides \
+              EcrImageUri=$ECR_URI \
+              GlobalWebACLArn="${{ needs.deploy-waf.outputs.waf-arn }}" \
+              LambdaFunctionName=FastApiFunction \
+              TableName=OrdersTable \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset
 
       - name: Get API URL
         id: get-url

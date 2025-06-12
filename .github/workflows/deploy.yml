@@ -23,7 +23,6 @@ jobs:
 
     outputs:
       ecr-registry: ${{ steps.terraform-output.outputs.ecr-registry }}
-      role-arn: ${{ steps.terraform-output.outputs.role-arn }}
 
     steps:
       - name: Checkout code
@@ -66,7 +65,6 @@ jobs:
         working-directory: ./terraform
         run: |
           echo "ecr-registry=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
-          echo "role-arn=$(terraform output -raw github_actions_role_arn)" >> $GITHUB_OUTPUT
 
   build-and-push:
     name: Build and Push Docker Image
@@ -90,7 +88,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.terraform-setup.outputs.role-arn }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -157,7 +155,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.terraform-setup.outputs.role-arn }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1 # WAF must be deployed in us-east-1 for CloudFront
 
       - name: Deploy WAF Stack
@@ -213,7 +211,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.terraform-setup.outputs.role-arn }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy Network Stack
@@ -260,7 +258,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.terraform-setup.outputs.role-arn }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy Application Stack
@@ -361,7 +359,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ needs.terraform-setup.outputs.role-arn }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Cleanup Failed Stacks

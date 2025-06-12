@@ -8,10 +8,8 @@ output "ecr_repository_arn" {
   value       = aws_ecr_repository.app_repo.arn
 }
 
-output "github_actions_role_arn" {
-  description = "GitHub Actions IAM role ARN"
-  value       = aws_iam_role.github_actions_role.arn
-}
+# Note: github_actions_role_arn is not output since the role was created manually
+# The role ARN is stored in GitHub secrets as AWS_ROLE_ARN
 
 output "aws_account_id" {
   description = "AWS Account ID"

@@ -161,6 +161,33 @@ jobs:
       - name: Deploy WAF Stack
         id: deploy-waf
         run: |
+          # Function to check and clean up failed stacks
+          cleanup_failed_stack() {
+            local stack_name=$1
+            local region=$2
+            
+            if aws cloudformation describe-stacks --stack-name $stack_name --region $region >/dev/null 2>&1; then
+              local status=$(aws cloudformation describe-stacks --stack-name $stack_name --region $region --query 'Stacks[0].StackStatus' --output text)
+              echo "Stack $stack_name current status: $status"
+              
+              # If stack is in a failed state, delete it
+              if [[ "$status" == *"FAILED"* ]] || [[ "$status" == *"ROLLBACK"* ]]; then
+                echo "Stack is in failed state ($status), deleting it..."
+                aws cloudformation delete-stack --stack-name $stack_name --region $region
+                
+                echo "Waiting for stack deletion to complete..."
+                aws cloudformation wait stack-delete-complete --stack-name $stack_name --region $region
+                echo "Stack deleted successfully"
+              fi
+            else
+              echo "Stack $stack_name does not exist"
+            fi
+          }
+
+          # Clean up any failed WAF stack before deployment
+          cleanup_failed_stack "high-scalable-waf-global" "us-east-1"
+
+          # Deploy the WAF stack
           aws cloudformation deploy \
             --template-file cform/waf-global.yaml \
             --stack-name high-scalable-waf-global \
@@ -197,6 +224,33 @@ jobs:
 
       - name: Deploy Network Stack
         run: |
+          # Function to check and clean up failed stacks
+          cleanup_failed_stack() {
+            local stack_name=$1
+            local region=$2
+            
+            if aws cloudformation describe-stacks --stack-name $stack_name --region $region >/dev/null 2>&1; then
+              local status=$(aws cloudformation describe-stacks --stack-name $stack_name --region $region --query 'Stacks[0].StackStatus' --output text)
+              echo "Stack $stack_name current status: $status"
+              
+              # If stack is in a failed state, delete it
+              if [[ "$status" == *"FAILED"* ]] || [[ "$status" == *"ROLLBACK"* ]]; then
+                echo "Stack is in failed state ($status), deleting it..."
+                aws cloudformation delete-stack --stack-name $stack_name --region $region
+                
+                echo "Waiting for stack deletion to complete..."
+                aws cloudformation wait stack-delete-complete --stack-name $stack_name --region $region
+                echo "Stack deleted successfully"
+              fi
+            else
+              echo "Stack $stack_name does not exist"
+            fi
+          }
+
+          # Clean up any failed Network stack before deployment
+          cleanup_failed_stack "high-scalable-network" "${{ env.AWS_REGION }}"
+
+          # Deploy the Network stack
           aws cloudformation deploy \
             --template-file cform/network.yaml \
             --stack-name high-scalable-network \
@@ -225,9 +279,36 @@ jobs:
 
       - name: Deploy Application Stack
         run: |
+          # Function to check and clean up failed stacks
+          cleanup_failed_stack() {
+            local stack_name=$1
+            local region=$2
+            
+            if aws cloudformation describe-stacks --stack-name $stack_name --region $region >/dev/null 2>&1; then
+              local status=$(aws cloudformation describe-stacks --stack-name $stack_name --region $region --query 'Stacks[0].StackStatus' --output text)
+              echo "Stack $stack_name current status: $status"
+              
+              # If stack is in a failed state, delete it
+              if [[ "$status" == *"FAILED"* ]] || [[ "$status" == *"ROLLBACK"* ]]; then
+                echo "Stack is in failed state ($status), deleting it..."
+                aws cloudformation delete-stack --stack-name $stack_name --region $region
+                
+                echo "Waiting for stack deletion to complete..."
+                aws cloudformation wait stack-delete-complete --stack-name $stack_name --region $region
+                echo "Stack deleted successfully"
+              fi
+            else
+              echo "Stack $stack_name does not exist"
+            fi
+          }
+
+          # Clean up any failed Application stack before deployment
+          cleanup_failed_stack "high-scalable-application" "${{ env.AWS_REGION }}"
+
           # Get the ECR image URI
           ECR_URI="${{ needs.terraform-setup.outputs.ecr-registry }}:${{ github.sha }}"
 
+          # Deploy the Application stack
           aws cloudformation deploy \
             --template-file cform/application.yaml \
             --stack-name high-scalable-application \

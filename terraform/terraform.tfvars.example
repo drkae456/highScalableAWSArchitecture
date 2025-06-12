@@ -1,0 +1,8 @@
+# Copy this file to terraform.tfvars and update with your values
+# This file should not be committed to version control
+
+github_repo = "your-username/your-repo-name"
+aws_region = "ap-southeast-4" 
+repository_name = "high-scalable-aws-app"
+environment = "dev"
+project_name = "high-scalable-aws" 

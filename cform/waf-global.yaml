@@ -1,0 +1,27 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Global WAFv2 WebACL for CloudFront
+
+Parameters:
+  WebAclName:
+    Type: String
+    Default: MyGlobalWebACL
+
+Resources:
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Ref WebAclName
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "${WebAclName}-metrics"
+      Rules: [] # add your rules here
+
+Outputs:
+  WebACLArn:
+    Value: !GetAtt WebACL.Arn
+    Export:
+      Name: GlobalWebACLArn

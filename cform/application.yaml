@@ -8,6 +8,7 @@ Parameters:
   EcrImageUri:
     Type: String
     Description: ECR URI for FastAPI container
+    Default: 650777358419.dkr.ecr.ap-southeast-4.amazonaws.com/high-scalable-aws-app:fe8a0406261b6c40dec04fcf5def92cb560b8d77
   LambdaFunctionName:
     Type: String
     Default: FastApiFunction

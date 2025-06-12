@@ -1,11 +1,11 @@
 output "ecr_repository_url" {
   description = "ECR repository URL"
-  value       = aws_ecr_repository.app_repo.repository_url
+  value       = data.aws_ecr_repository.app_repo.repository_url
 }
 
 output "ecr_repository_arn" {
   description = "ECR repository ARN"
-  value       = aws_ecr_repository.app_repo.arn
+  value       = data.aws_ecr_repository.app_repo.arn
 }
 
 # Note: github_actions_role_arn is not output since the role was created manually

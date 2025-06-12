@@ -12,32 +12,14 @@ provider "aws" {
   region = var.aws_region
 }
 
-# ECR Repository
-resource "aws_ecr_repository" "app_repo" {
-  name                 = var.repository_name
-  image_tag_mutability = "MUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-
-  encryption_configuration {
-    encryption_type = "AES256"
-  }
-
-  lifecycle {
-    prevent_destroy = true
-  }
-
-  tags = {
-    Environment = var.environment
-    Project     = var.project_name
-  }
+# Look up the existing ECR repository
+data "aws_ecr_repository" "app_repo" {
+  name = var.repository_name
 }
 
 # ECR Lifecycle Policy
 resource "aws_ecr_lifecycle_policy" "app_repo_policy" {
-  repository = aws_ecr_repository.app_repo.name
+  repository = data.aws_ecr_repository.app_repo.name
 
   policy = jsonencode({
     rules = [

@@ -148,7 +148,7 @@ curl $API_URL/orders
 ### ✅ Production Ready
 
 - Multi-AZ deployment for high availability
-- Encrypted storage (S3, DynamoDB) with customer-managed keys
+- Encrypted storage (S3, DynamoDB) with customer-managed keyshhh
 - WAF protection against common attacks
 - CloudFront for global low-latency access
 

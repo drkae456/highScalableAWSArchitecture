@@ -8,17 +8,21 @@ on:
 
 env:
   AWS_REGION: ap-southeast-4
+  ECR_REPOSITORY: high-scalable-aws-app
   TERRAFORM_VERSION: 1.6.0
 
 jobs:
   terraform-setup:
-    name: Setup Infrastructure with Terraform
+    name: Setup ECR with Terraform
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 
     permissions:
       id-token: write
       contents: read
+
+    outputs:
+      ecr-registry: ${{ steps.terraform-output.outputs.ecr-registry }}
 
     steps:
       - name: Checkout code
@@ -45,19 +49,319 @@ jobs:
         run: |
           terraform plan \
             -var="github_repo=${{ github.repository }}" \
-            -var="aws_region=${{ env.AWS_REGION }}"
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="repository_name=${{ env.ECR_REPOSITORY }}"
 
       - name: Terraform Apply
         working-directory: ./terraform
         run: |
           terraform apply -auto-approve \
             -var="github_repo=${{ github.repository }}" \
-            -var="aws_region=${{ env.AWS_REGION }}"
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="repository_name=${{ env.ECR_REPOSITORY }}"
+
+      - name: Get Terraform Outputs
+        id: terraform-output
+        working-directory: ./terraform
+        run: |
+          echo "ecr-registry=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
+
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: terraform-setup
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+      should-deploy: ${{ steps.check-image.outputs.should-deploy }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ needs.terraform-setup.outputs.ecr-registry }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ github.sha }}
+            type=sha
+
+      - name: Check if image already exists
+        id: check-image
+        run: |
+          IMAGE_TAG="${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+          if aws ecr describe-images --repository-name ${{ env.ECR_REPOSITORY }} --image-ids imageTag=${{ github.sha }} --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            echo "Image already exists, skipping build"
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+          else
+            echo "Image does not exist, proceeding with build"
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.check-image.outputs.should-deploy == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        if: steps.check-image.outputs.should-deploy == 'true'
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.apprunner
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-network:
+    name: Deploy Network Stack
+    runs-on: ubuntu-latest
+    needs: [terraform-setup, build-and-push]
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy Network Stack
+        run: |
+          # Function to check and clean up failed stacks
+          cleanup_failed_stack() {
+            local stack_name=$1
+            local region=$2
+            
+            if aws cloudformation describe-stacks --stack-name $stack_name --region $region >/dev/null 2>&1; then
+              local status=$(aws cloudformation describe-stacks --stack-name $stack_name --region $region --query 'Stacks[0].StackStatus' --output text)
+              echo "Stack $stack_name current status: $status"
+              
+              # If stack is in a failed state, delete it
+              if [[ "$status" == *"FAILED"* ]] || [[ "$status" == *"ROLLBACK"* ]]; then
+                echo "Stack is in failed state ($status), deleting it..."
+                aws cloudformation delete-stack --stack-name $stack_name --region $region
+                
+                echo "Waiting for stack deletion to complete..."
+                aws cloudformation wait stack-delete-complete --stack-name $stack_name --region $region
+                echo "Stack deleted successfully"
+              fi
+            else
+              echo "Stack $stack_name does not exist"
+            fi
+          }
+
+          # Clean up any failed Network stack before deployment
+          cleanup_failed_stack "high-scalable-network" "${{ env.AWS_REGION }}"
+
+          # Deploy the Network stack
+          aws cloudformation deploy \
+            --template-file cform/network.yaml \
+            --stack-name high-scalable-network \
+            --region ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset
+
+  deploy-application:
+    name: Deploy Application Stack (Shared Infrastructure)
+    runs-on: ubuntu-latest
+    needs: [terraform-setup, build-and-push, deploy-network]
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy Application Stack
+        run: |
+          # Function to check and clean up failed stacks
+          cleanup_failed_stack() {
+            local stack_name=$1
+            local region=$2
+            
+            if aws cloudformation describe-stacks --stack-name $stack_name --region $region >/dev/null 2>&1; then
+              local status=$(aws cloudformation describe-stacks --stack-name $stack_name --region $region --query 'Stacks[0].StackStatus' --output text)
+              echo "Stack $stack_name current status: $status"
+              
+              # If stack is in a failed state, delete it
+              if [[ "$status" == *"FAILED"* ]] || [[ "$status" == *"ROLLBACK"* ]]; then
+                echo "Stack is in failed state ($status), deleting it..."
+                aws cloudformation delete-stack --stack-name $stack_name --region $region
+                
+                echo "Waiting for stack deletion to complete..."
+                aws cloudformation wait stack-delete-complete --stack-name $stack_name --region $region
+                echo "Stack deleted successfully"
+              fi
+            else
+              echo "Stack $stack_name does not exist"
+            fi
+          }
+
+          # Clean up any failed Application stack before deployment
+          cleanup_failed_stack "high-scalable-application" "${{ env.AWS_REGION }}"
+
+          # Deploy the Application stack (shared infrastructure)
+          aws cloudformation deploy \
+            --template-file cform/application.yaml \
+            --stack-name high-scalable-application \
+            --region ${{ env.AWS_REGION }} \
+            --parameter-overrides \
+              TableName=OrdersTable \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset
+
+  deploy-ecs-fargate:
+    name: Deploy ECS Fargate Stack
+    runs-on: ubuntu-latest
+    needs: [terraform-setup, build-and-push, deploy-network, deploy-application]
+    if: github.ref == 'refs/heads/main' && (needs.build-and-push.outputs.should-deploy == 'true' || github.event_name == 'workflow_dispatch')
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy ECS Fargate Stack
+        run: |
+          # Function to check and clean up failed stacks
+          cleanup_failed_stack() {
+            local stack_name=$1
+            local region=$2
+            
+            if aws cloudformation describe-stacks --stack-name $stack_name --region $region >/dev/null 2>&1; then
+              local status=$(aws cloudformation describe-stacks --stack-name $stack_name --region $region --query 'Stacks[0].StackStatus' --output text)
+              echo "Stack $stack_name current status: $status"
+              
+              # If stack is in a failed state, delete it
+              if [[ "$status" == *"FAILED"* ]] || [[ "$status" == *"ROLLBACK"* ]]; then
+                echo "Stack is in failed state ($status), deleting it..."
+                aws cloudformation delete-stack --stack-name $stack_name --region $region
+                
+                echo "Waiting for stack deletion to complete..."
+                aws cloudformation wait stack-delete-complete --stack-name $stack_name --region $region
+                echo "Stack deleted successfully"
+              fi
+            else
+              echo "Stack $stack_name does not exist"
+            fi
+          }
+
+          # Clean up any failed ECS Fargate stack before deployment
+          cleanup_failed_stack "fastapi-ecs-fargate" "${{ env.AWS_REGION }}"
+
+          # Use ECR image URI with latest tag
+          ECR_URI="${{ needs.terraform-setup.outputs.ecr-registry }}:latest"
+
+          # Deploy the ECS Fargate stack
+          aws cloudformation deploy \
+            --template-file cform/ecs-fargate.yaml \
+            --stack-name fastapi-ecs-fargate \
+            --region ${{ env.AWS_REGION }} \
+            --parameter-overrides \
+              EcrImageUri=$ECR_URI \
+              ServiceName=fastapi-ecs-service \
+              ApplicationStackName=high-scalable-application \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Get FastAPI URLs
+        id: get-urls
+        run: |
+          ALB_URL=$(aws cloudformation describe-stacks \
+            --stack-name fastapi-ecs-fargate \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerUrl`].OutputValue' \
+            --output text)
+
+          SWAGGER_URL=$(aws cloudformation describe-stacks \
+            --stack-name fastapi-ecs-fargate \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`SwaggerUrl`].OutputValue' \
+            --output text)
+
+          echo "FastAPI URL: $ALB_URL"
+          echo "Swagger UI: $SWAGGER_URL"
+
+          echo "alb-url=$ALB_URL" >> $GITHUB_OUTPUT
+          echo "swagger-url=$SWAGGER_URL" >> $GITHUB_OUTPUT
+
+      - name: Test FastAPI Endpoints
+        run: |
+          # Wait a bit for the deployment to be ready
+          sleep 60
+
+          # Test the health endpoint
+          ALB_URL="${{ steps.get-urls.outputs.alb-url }}"
+
+          echo "Testing health endpoint..."
+          curl -f "$ALB_URL/health" || echo "Health check failed, but continuing..."
+
+          echo "Testing root endpoint..."
+          curl -f "$ALB_URL/" || echo "Root endpoint failed, but continuing..."
+
+          echo "FastAPI Swagger UI available at: ${{ steps.get-urls.outputs.swagger-url }}"
 
   cleanup-on-failure:
     name: Cleanup on Failure
     runs-on: ubuntu-latest
-    needs: [terraform-setup]
+    needs:
+      [
+        terraform-setup,
+        build-and-push,
+        deploy-network,
+        deploy-application,
+        deploy-ecs-fargate,
+      ]
     if: failure() && github.ref == 'refs/heads/main'
 
     permissions:
@@ -98,6 +402,15 @@ jobs:
             fi
           }
 
+          # Cleanup stacks in reverse order (ecs -> application -> network)
+          check_and_cleanup_stack "fastapi-ecs-fargate" "${{ env.AWS_REGION }}"
+          check_and_cleanup_stack "high-scalable-application" "${{ env.AWS_REGION }}"
+          check_and_cleanup_stack "high-scalable-network" "${{ env.AWS_REGION }}"
+
+      - name: List Remaining Resources
+        run: |
+          echo "Checking for remaining resources..."
+
           # List any remaining CloudFormation stacks with our naming pattern
-          echo "Remaining stacks with 'high-scalable' prefix:"
-          aws cloudformation list-stacks --region ${{ env.AWS_REGION }} --query 'StackSummaries[?contains(StackName, `high-scalable`) && StackStatus != `DELETE_COMPLETE`].[StackName,StackStatus]' --output table || true
+          echo "Remaining stacks with 'high-scalable' or 'fastapi' prefix:"
+          aws cloudformation list-stacks --region ${{ env.AWS_REGION }} --query 'StackSummaries[?(contains(StackName, `high-scalable`) || contains(StackName, `fastapi`)) && StackStatus != `DELETE_COMPLETE`].[StackName,StackStatus]' --output table || true

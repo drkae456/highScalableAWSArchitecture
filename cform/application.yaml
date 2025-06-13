@@ -1,23 +1,12 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   AWS application stack in ap-southeast-4:
-  S3, KMS, DynamoDB, EventBridge, Lambda (container),
-  API Gateway, WAF, CloudFront.
+  S3, KMS, DynamoDB, EventBridge for shared infrastructure.
 
 Parameters:
-  EcrImageUri:
-    Type: String
-    Description: ECR URI for FastAPI container
-    Default: 650777358419.dkr.ecr.ap-southeast-4.amazonaws.com/high-scalable-aws-app:latest
-  LambdaFunctionName:
-    Type: String
-    Default: FastApiFunction
   TableName:
     Type: String
     Default: OrdersTable
-  GlobalWebACLArn:
-    Type: String
-    Description: ARN of WAFv2 WebACL (global, created in us-east-1)
 
 Resources:
   # Encryption key
@@ -64,172 +53,27 @@ Resources:
     Properties:
       Name: !Sub "${AWS::StackName}-bus"
 
-  # IAM role for Lambda
-  LambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal: { Service: lambda.amazonaws.com }
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: LambdaExecPolicy
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:Create*
-                  - logs:PutLogEvents
-                Resource: !Sub "arn:aws:logs:ap-southeast-4:${AWS::AccountId}:log-group:/aws/lambda/*:log-stream:*"
-              - Effect: Allow
-                Action: events:PutEvents
-                Resource: "*"
-              - Effect: Allow
-                Action: s3:PutObject
-                Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
-              - Effect: Allow
-                Action: dynamodb:*
-                Resource: !GetAtt DynamoDBTable.Arn
-              - Effect: Allow
-                Action:
-                  - kms:Decrypt
-                  - kms:GenerateDataKey
-                Resource: !GetAtt KMSKey.Arn
-              - Effect: Allow
-                Action:
-                  - ec2:CreateNetworkInterface
-                  - ec2:DescribeNetworkInterfaces
-                  - ec2:DeleteNetworkInterface
-                Resource: "*"
-
-  # Security group in imported VPC
-  LambdaSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow outbound
-      VpcId: !ImportValue NetworkStack-VpcId
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-
-  # FastAPI Lambda
-  FastApiFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Ref LambdaFunctionName
-      PackageType: Image
-      Code: { ImageUri: !Ref EcrImageUri }
-      Role: !GetAtt LambdaExecutionRole.Arn
-      VpcConfig:
-        SubnetIds:
-          - !ImportValue NetworkStack-PrivateSubnetAId
-          - !ImportValue NetworkStack-PrivateSubnetBId
-        SecurityGroupIds:
-          - !Ref LambdaSecurityGroup
-      Timeout: 30
-      MemorySize: 512
-      Environment:
-        Variables:
-          TABLE_NAME: !Ref DynamoDBTable
-          EVENT_BUS_NAME: !Ref EventBus
-          S3_BUCKET: !Ref S3Bucket
-
-  # HTTP API
-  ApiGateway:
-    Type: AWS::ApiGatewayV2::Api
-    Properties:
-      Name: !Sub "${AWS::StackName}-api"
-      ProtocolType: HTTP
-      CorsConfiguration:
-        AllowOrigins: ["*"]
-        AllowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-        AllowHeaders: ["Content-Type", "Authorization"]
-
-  ApiIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref ApiGateway
-      IntegrationType: AWS_PROXY
-      IntegrationUri:
-        Fn::Sub:
-          - arn:aws:apigateway:ap-southeast-4:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-          - LambdaArn: !GetAtt FastApiFunction.Arn
-      PayloadFormatVersion: "2.0"
-
-  ApiRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref ApiGateway
-      RouteKey: "ANY /{proxy+}"
-      Target: !Sub "integrations/${ApiIntegration}"
-
-  ApiRouteRoot:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref ApiGateway
-      RouteKey: "ANY /"
-      Target: !Sub "integrations/${ApiIntegration}"
-
-  ApiStage:
-    Type: AWS::ApiGatewayV2::Stage
-    Properties:
-      ApiId: !Ref ApiGateway
-      StageName: prod
-      AutoDeploy: true
-
-  PermissionApiLambda:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref FastApiFunction
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn:
-        Fn::Sub: arn:aws:execute-api:ap-southeast-4:${AWS::AccountId}:${ApiGateway}/*/*/*
-
-  # CloudFront
-  CloudFrontDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        DefaultRootObject: index.html
-        Origins:
-          - Id: S3Origin
-            DomainName: !GetAtt S3Bucket.DomainName
-            S3OriginConfig: {}
-          - Id: ApiOrigin
-            DomainName: !Sub "${ApiGateway}.execute-api.ap-southeast-4.amazonaws.com"
-            CustomOriginConfig:
-              OriginProtocolPolicy: https-only
-        DefaultCacheBehavior:
-          TargetOriginId: ApiOrigin
-          ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
-          CachedMethods: [GET, HEAD]
-          ForwardedValues:
-            QueryString: true
-            Headers: ["*"]
-        CacheBehaviors:
-          - PathPattern: "/static/*"
-            TargetOriginId: S3Origin
-            ViewerProtocolPolicy: redirect-to-https
-            AllowedMethods: [GET, HEAD]
-            CachedMethods: [GET, HEAD]
-            ForwardedValues:
-              QueryString: false
-              Headers: []
-        Restrictions:
-          GeoRestriction:
-            RestrictionType: none
-        WebACLId: !Ref GlobalWebACLArn
-
 Outputs:
-  ApiUrl:
-    Description: HTTP API endpoint
-    Value: !Sub "https://${ApiGateway}.execute-api.ap-southeast-4.amazonaws.com/prod/"
-  CloudFrontDomainName:
-    Description: CloudFront distribution domain name
-    Value: !GetAtt CloudFrontDistribution.DomainName
+  DynamoDBTableName:
+    Description: DynamoDB table name
+    Value: !Ref DynamoDBTable
+    Export:
+      Name: !Sub "${AWS::StackName}-DynamoDBTable"
+
+  EventBusName:
+    Description: EventBridge bus name
+    Value: !Ref EventBus
+    Export:
+      Name: !Sub "${AWS::StackName}-EventBus"
+
+  S3BucketName:
+    Description: S3 bucket name
+    Value: !Ref S3Bucket
+    Export:
+      Name: !Sub "${AWS::StackName}-S3Bucket"
+
+  KMSKeyId:
+    Description: KMS key ID
+    Value: !Ref KMSKey
+    Export:
+      Name: !Sub "${AWS::StackName}-KMSKey"

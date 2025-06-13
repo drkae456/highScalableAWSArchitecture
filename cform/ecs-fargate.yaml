@@ -10,9 +10,10 @@ Parameters:
   ServiceName:
     Type: String
     Default: fastapi-ecs-service
-  TableName:
+  ApplicationStackName:
     Type: String
-    Default: OrdersTable
+    Default: high-scalable-application
+    Description: Name of the application stack that contains shared resources
 
 Resources:
   # ECS Cluster
@@ -41,11 +42,14 @@ Resources:
               Protocol: tcp
           Environment:
             - Name: TABLE_NAME
-              Value: !Ref TableName
+              Value: !ImportValue
+                Fn::Sub: "${ApplicationStackName}-DynamoDBTable"
             - Name: EVENT_BUS_NAME
-              Value: !Sub "${AWS::StackName}-bus"
+              Value: !ImportValue
+                Fn::Sub: "${ApplicationStackName}-EventBus"
             - Name: S3_BUCKET
-              Value: !Sub "${AWS::StackName}-static-assets"
+              Value: !ImportValue
+                Fn::Sub: "${ApplicationStackName}-S3Bucket"
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -86,7 +90,10 @@ Resources:
               - Effect: Allow
                 Action:
                   - dynamodb:*
-                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}"
+                Resource: !Sub
+                  - "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}"
+                  - TableName: !ImportValue
+                      Fn::Sub: "${ApplicationStackName}-DynamoDBTable"
               - Effect: Allow
                 Action:
                   - events:PutEvents
@@ -95,7 +102,18 @@ Resources:
                 Action:
                   - s3:PutObject
                   - s3:GetObject
-                Resource: "*"
+                Resource: !Sub
+                  - "arn:aws:s3:::${BucketName}/*"
+                  - BucketName: !ImportValue
+                      Fn::Sub: "${ApplicationStackName}-S3Bucket"
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !Sub
+                  - "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KeyId}"
+                  - KeyId: !ImportValue
+                      Fn::Sub: "${ApplicationStackName}-KMSKey"
 
   # CloudWatch Log Group
   LogGroup:
@@ -194,36 +212,6 @@ Resources:
         - ContainerName: fastapi-container
           ContainerPort: 8000
           TargetGroupArn: !Ref TargetGroup
-
-  # DynamoDB Table (if not exists)
-  DynamoDBTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: !Ref TableName
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - { AttributeName: pk, AttributeType: S }
-        - { AttributeName: sk, AttributeType: S }
-      KeySchema:
-        - { AttributeName: pk, KeyType: HASH }
-        - { AttributeName: sk, KeyType: RANGE }
-
-  # EventBridge bus
-  EventBus:
-    Type: AWS::Events::EventBus
-    Properties:
-      Name: !Sub "${AWS::StackName}-bus"
-
-  # S3 bucket for static assets
-  S3Bucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "${AWS::StackName}-static-assets"
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
 
 Outputs:
   LoadBalancerUrl:

@@ -11,7 +11,7 @@ Parameters:
     Default: 650777358419.dkr.ecr.ap-southeast-4.amazonaws.com/high-scalable-aws-app:latest
   LambdaFunctionName:
     Type: String
-    Default: FastApiFunction1
+    Default: FastApiFunction
   TableName:
     Type: String
     Default: OrdersTable
@@ -116,7 +116,7 @@ Resources:
           CidrIp: 0.0.0.0/0
 
   # FastAPI Lambda
-  FastApiFunction1:
+  FastApiFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Ref LambdaFunctionName
@@ -156,7 +156,7 @@ Resources:
       IntegrationUri:
         Fn::Sub:
           - arn:aws:apigateway:ap-southeast-4:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-          - LambdaArn: !GetAtt FastApiFunction1.Arn
+          - LambdaArn: !GetAtt FastApiFunction.Arn
       PayloadFormatVersion: "2.0"
 
   ApiRoute:
@@ -164,6 +164,13 @@ Resources:
     Properties:
       ApiId: !Ref ApiGateway
       RouteKey: "ANY /{proxy+}"
+      Target: !Sub "integrations/${ApiIntegration}"
+
+  ApiRouteRoot:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: "ANY /"
       Target: !Sub "integrations/${ApiIntegration}"
 
   ApiStage:
@@ -176,7 +183,7 @@ Resources:
   PermissionApiLambda:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref FastApiFunction1
+      FunctionName: !Ref FastApiFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn:

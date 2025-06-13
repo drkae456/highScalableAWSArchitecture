@@ -1,0 +1,23 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /",
+  "rawPath": "/",
+  "headers": {
+    "accept": "*/*",
+    "user-agent": "curl/7.68.0"
+  },
+  "requestContext": {
+    "accountId": "123456789012",
+    "apiId": "uix4tfons2",
+    "domainName": "uix4tfons2.execute-api.ap-southeast-4.amazonaws.com",
+    "http": {
+      "method": "GET",
+      "path": "/",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "127.0.0.1",
+      "userAgent": "curl/7.68.0"
+    },
+    "requestId": "test-request-id",
+    "stage": "prod"
+  }
+}
